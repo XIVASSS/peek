@@ -199,7 +199,7 @@ final class GlanceSettings {
         didSet { defaults.set(hapticFeedbackEnabled, forKey: Key.hapticFeedbackEnabled) }
     }
 
-    static let faceDetectionRange = 3...10
+    static let faceDetectionRange = 5...30
 
     /// Which display Face Unlock shows on. `nil` means `NotchGeometry.preferredScreen()`'s
     /// default, re-evaluated live; a pinned display has deliberately no
@@ -256,11 +256,9 @@ final class GlanceSettings {
         // Enabled by default — onboarding already enrolled a face and set a
         // password specifically to use Face Unlock.
         isFaceUnlockEnabled = defaults.object(forKey: Key.isFaceUnlockEnabled) as? Bool ?? true
-        // Slightly stricter than stock Glance — geometry vault + heavy liveness cover the rest.
+        // Face-ID-class defaults: stricter ArcFace + Heavy liveness (deny + proof of life).
         matchThreshold = defaults.object(forKey: Key.matchThreshold) as? Float ?? 0.68
         livenessChecksEnabled = defaults.object(forKey: Key.livenessChecksEnabled) as? Bool ?? true
-        // Heavy by default in this hardened fork: require blink / flat-vs-3D / depth-pose
-        // confirmation so a still photo can't ride Light mode's auto-confirm.
         livenessMode = defaults.string(forKey: Key.livenessMode)
             .flatMap(LivenessMode.init(rawValue:)) ?? .heavy
         // Matches `DetectionDistanceLevel.standard` — see RecognitionSettingsPage.swift.
@@ -297,8 +295,8 @@ final class GlanceSettings {
         retryOnHover = defaults.object(forKey: Key.retryOnHover) as? Bool ?? true
         faceDetectionSeconds = (defaults.object(forKey: Key.faceDetectionSeconds) as? Int)
             .map { min(max($0, Self.faceDetectionRange.lowerBound), Self.faceDetectionRange.upperBound) }
-            ?? 5
-        autoRetryOnce = defaults.object(forKey: Key.autoRetryOnce) as? Bool ?? false
+            ?? 20
+        autoRetryOnce = defaults.object(forKey: Key.autoRetryOnce) as? Bool ?? true
         hapticFeedbackEnabled = defaults.object(forKey: Key.hapticFeedbackEnabled) as? Bool ?? true
         preferredDisplayID = defaults.string(forKey: Key.preferredDisplayID)
         preferredDisplayName = defaults.string(forKey: Key.preferredDisplayName)

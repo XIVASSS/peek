@@ -120,15 +120,21 @@ struct FaceIdentity: Codable, Identifiable, Equatable {
         FaceEmbedding.average(samples.map(\.embedding))
     }
 
-    /// True when this identity carries usable 3D-proxy templates (post-hardening enrollments).
+    /// True when this identity carries a usable multi-pose 3D vault (post-hardening enrollments).
+    /// Requires several templates so a single frontal frame can't stand in for "you in 3D."
     nonisolated var hasGeometryVault: Bool {
         guard let profile = geometryProfile else { return false }
-        return !profile.templates.isEmpty
+        return profile.templates.count >= 4
     }
 
     /// True if samples came from a different embedder than the one currently active — should prompt re-enrollment.
     nonisolated func isStale(comparedTo embedder: FaceEmbedder) -> Bool {
         modelIdentifier != embedder.modelIdentifier
+    }
+
+    /// Identities enrolled before the geometry vault existed — Settings prompts recapture.
+    nonisolated var needsGeometryRecapture: Bool {
+        !hasGeometryVault
     }
 
     nonisolated static func makeGeometryProfile(from samples: [FaceSample]) -> FaceGeometryProfile? {

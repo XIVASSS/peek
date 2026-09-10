@@ -125,14 +125,15 @@ nonisolated struct ScoredIdentity {
     /// cases where averaging blurred together poses that shouldn't be
     /// blended.
     let maxSampleSimilarity: Float
-    /// Best match against the encrypted 3D-proxy geometry vault (0 when vault empty / live missing).
-    let geometrySimilarity: Float
+    /// Best match against the encrypted 3D-proxy geometry vault.
+    /// `nil` when live landmarks weren't available this frame (don't treat as 0).
+    let geometrySimilarity: Float?
 }
 
 extension FaceRecognitionPipeline {
-    /// Default floor for the geometry vault. Tuned so same-person pose drift still passes
-    /// while a different face (or a poorly aligned photo) fails even if ArcFace is generous.
-    nonisolated static let defaultGeometryThreshold: Float = 0.78
+    /// Geometry floor when live landmarks are present. Tuned for Mac webcam noise
+    /// while still rejecting a flat photo of the enrollee (photos usually << 0.6).
+    nonisolated static let defaultGeometryThreshold: Float = 0.62
 
     /// Sorted by centroid similarity descending; includes stale identities (different embedder) since `bestMatch` is what excludes them from actually matching.
     nonisolated func score(
@@ -147,7 +148,7 @@ extension FaceRecognitionPipeline {
                 .map { FaceEmbedding.cosineSimilarity(embedding, $0.embedding) }
                 .max() ?? centroidSim
 
-            let geometrySim: Float
+            let geometrySim: Float?
             if let liveGeometry, let profile = identity.geometryProfile, !profile.templates.isEmpty {
                 geometrySim = FaceGeometryTemplate.bestSimilarity(
                     live: liveGeometry,
@@ -155,7 +156,7 @@ extension FaceRecognitionPipeline {
                     preferPose: liveGeometry.pose
                 )
             } else {
-                geometrySim = 0
+                geometrySim = nil
             }
 
             return ScoredIdentity(
@@ -168,8 +169,8 @@ extension FaceRecognitionPipeline {
     }
 
     /// Shared by Face Lab and FaceUnlockCoordinator so tuning stays consistent.
-    /// When the identity has a geometry vault and live geometry is available, both
-    /// ArcFace *and* the 3D-proxy template must clear their thresholds.
+    /// When an identity has a geometry vault, live landmarks must also pass the geometry floor
+    /// (fail-closed for that frame if landmarks are missing — keep scanning).
     nonisolated func bestMatch(
         in scored: [ScoredIdentity],
         threshold: Float,
@@ -180,7 +181,10 @@ extension FaceRecognitionPipeline {
         guard first.centroidSimilarity >= threshold, first.maxSampleSimilarity >= threshold else { return nil }
 
         if requireGeometryWhenAvailable, first.identity.hasGeometryVault {
-            guard first.geometrySimilarity >= geometryThreshold else { return nil }
+            guard let geometrySimilarity = first.geometrySimilarity,
+                  geometrySimilarity >= geometryThreshold else {
+                return nil
+            }
         }
 
         return first

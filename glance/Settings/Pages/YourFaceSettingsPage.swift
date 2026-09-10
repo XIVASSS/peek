@@ -252,7 +252,7 @@ struct YourFaceSettingsPage: View {
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) {
-                    try SecureCredentialManager.unlockSession(reason: "Authenticate to view your enrolled face")
+                    try await SecureCredentialManager.unlockSession(reason: "Authenticate to view your enrolled face")
                 }.value
                 store.reloadIfUnlocked()
             } catch {
@@ -330,6 +330,11 @@ private struct IdentityCard: View {
 
                 if isStale {
                     Text("Captured with a different recognition model — recapture before this face can unlock your Mac.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(SettingsMetrics.qualityFairColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if identity.needsGeometryRecapture {
+                    Text("3D face map incomplete — recapture once so Peek can reject photos of you.")
                         .font(.system(size: 11))
                         .foregroundStyle(SettingsMetrics.qualityFairColor)
                         .fixedSize(horizontal: false, vertical: true)

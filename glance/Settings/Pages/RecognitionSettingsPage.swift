@@ -149,9 +149,9 @@ private enum MatchConfidenceLevel: Int, CaseIterable {
 
     var threshold: Float {
         switch self {
-        case .lessStrict: return 0.58
-        case .standard: return 0.63
-        case .moreStrict: return 0.68
+        case .lessStrict: return 0.63
+        case .standard: return 0.68
+        case .moreStrict: return 0.72
         }
     }
 

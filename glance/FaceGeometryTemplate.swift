@@ -185,6 +185,7 @@ nonisolated enum FaceGeometryTemplate {
     }
 
     /// Best cosine/depth blend against any enrolled template. Prefer same pose when present.
+    /// Also blends the top-2 pose matches so a single lucky template can't dominate.
     static func bestSimilarity(
         live: FaceGeometryDescriptor,
         against profile: FaceGeometryProfile,
@@ -200,14 +201,21 @@ nonisolated enum FaceGeometryTemplate {
             ordered = profile.templates
         }
 
-        return ordered.map { similarity(live, $0) }.max() ?? 0
+        let scores = ordered.map { similarity(live, $0) }.sorted(by: >)
+        guard let best = scores.first else { return 0 }
+        if scores.count >= 2 {
+            // Require the second-best to be somewhat close — resists a single flat-photo template.
+            return 0.75 * best + 0.25 * scores[1]
+        }
+        return best
     }
 
     /// Shape-heavy blend: same person under a new expression should still clear ~0.8+.
     static func similarity(_ a: FaceGeometryDescriptor, _ b: FaceGeometryDescriptor) -> Float {
         let shapeSim = max(0, cosineSimilarity(a.shape, b.shape))
         let depthSim = depthSimilarity(a.depth, b.depth)
-        return 0.7 * shapeSim + 0.3 * depthSim
+        // Slightly more weight on depth proxies — photos share 2D shape more easily than depth.
+        return 0.62 * shapeSim + 0.38 * depthSim
     }
 
     // MARK: - Math
