@@ -301,7 +301,7 @@ final class OnboardingController {
         guard !SecureCredentialManager.isSessionUnlocked else { return true }
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: reason)
+                try await SecureCredentialManager.unlockSession(reason: reason)
             }.value
             return true
         } catch {
@@ -352,9 +352,19 @@ final class OnboardingController {
 
     private(set) var accessibilityGranted = false
     private(set) var cameraPermission: CameraPermissionState = .notDetermined
-    var bothPermissionsGranted: Bool { accessibilityGranted && cameraPermission == .granted }
+    /// Matches Glance: Next stays disabled until macOS reports real Accessibility trust.
+    var bothPermissionsGranted: Bool {
+        accessibilityGranted && cameraPermission == .granted
+    }
 
     private var permissionsPollTask: Task<Void, Never>?
+    /// After Grant, macOS won't report AX trust until Peek relaunches. We relaunch
+    /// once when the user returns from System Settings (no extra UI).
+    private var pendingAccessibilityRelaunch = false
+    private var accessibilityGrantStartedAt: ContinuousClock.Instant?
+    private var accessibilityResignedAt: ContinuousClock.Instant?
+    private var accessibilityActivationObserver: NSObjectProtocol?
+    private var accessibilityResignObserver: NSObjectProtocol?
 
     // MARK: - Enrollment
 
@@ -362,29 +372,31 @@ final class OnboardingController {
     /// (2 samples each = 18). No hard "hold exactly here" gate.
     private let samplesPerPose = 2
     /// Minimum Vision quality to accept a frame. Prefer upgrading later with better ones.
-    private let qualityFloor: Float = 0.12
+    private let qualityFloor: Float = 0.10
     /// Prefer replacing a bin sample when the new frame is meaningfully sharper.
-    private let qualityUpgradeDelta: Float = 0.04
+    private let qualityUpgradeDelta: Float = 0.03
     /// Brief settle after camera start — detection still runs.
     private let initialCaptureDelay: Duration = .milliseconds(400)
     /// Minimum gap between accepted captures so we don't dump 18 near-identical frames.
-    private let captureCooldown: Duration = .milliseconds(140)
+    private let captureCooldown: Duration = .milliseconds(120)
     /// Softer than unlock's bystander cutoff — "bring closer" was the #1 friction point.
-    private var enrollmentMinimumFaceWidth: Float { 0.14 }
+    private var enrollmentMinimumFaceWidth: Float { 0.12 }
 
     /// Soft bins for classifying a live head pose (radians). Wide on purpose so a natural
     /// turn fills the ring without hunting for a exact angle.
-    private let yawBinThreshold: Float = 0.14
-    private let pitchBinThreshold: Float = 0.11
+    private let yawBinThreshold: Float = 0.12
+    private let pitchBinThreshold: Float = 0.10
     /// For the live ring indicator scale only.
     private let yawInnerThreshold: Float = 0.22
     private let pitchInnerThreshold: Float = 0.18
 
     /// If coverage is still incomplete after this, finish with what we have once
     /// enough poses/samples exist — never strand the user on one corner pose.
-    private let softCompleteAfter: Duration = .seconds(28)
-    private let softCompleteMinPoses = 7
-    private let softCompleteMinSamples = 12
+    private let softCompleteAfter: Duration = .seconds(16)
+    private let softCompleteMinPoses = 6
+    private let softCompleteMinSamples = 10
+    /// Geometry vault needs several 3D-proxy templates before we finish.
+    private let minGeometryTemplates = 4
 
     private(set) var currentPoseIndex = 0
     private(set) var capturedForCurrentPose = 0
@@ -456,7 +468,10 @@ final class OnboardingController {
         if isTooFar { return "Move a little closer" }
         if !faceDetected { return "Look at the camera" }
         if collectedSamples.isEmpty {
-            return "Look straight ahead, then slowly turn your head"
+            return "Look at the camera, then slowly turn your head"
+        }
+        if geometryTemplateCount < minGeometryTemplates {
+            return "Keep turning naturally — building your 3D face map"
         }
         if filledPoseCount >= EnrollmentPose.allCases.count {
             return "Finishing up…"
@@ -464,7 +479,7 @@ final class OnboardingController {
         if let suggested = suggestedPose, suggested != .center, sampleCount(for: suggested) == 0 {
             return "Keep turning — \(suggested.softHint)"
         }
-        return "Slowly turn your head to fill the ring"
+        return "Keep turning naturally to fill the ring"
     }
 
     /// Where the head is currently turned, for the ring's live indicator.
@@ -679,11 +694,44 @@ final class OnboardingController {
                 self.refreshPermissions()
             }
         }
+        if accessibilityResignObserver == nil {
+            accessibilityResignObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.accessibilityResignedAt = .now
+                }
+            }
+        }
+        if accessibilityActivationObserver == nil {
+            accessibilityActivationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.handleAccessibilityReturnFromSettings()
+                }
+            }
+        }
     }
 
     private func stopPermissionsPolling() {
         permissionsPollTask?.cancel()
         permissionsPollTask = nil
+        if let accessibilityActivationObserver {
+            NotificationCenter.default.removeObserver(accessibilityActivationObserver)
+            self.accessibilityActivationObserver = nil
+        }
+        if let accessibilityResignObserver {
+            NotificationCenter.default.removeObserver(accessibilityResignObserver)
+            self.accessibilityResignObserver = nil
+        }
+        pendingAccessibilityRelaunch = false
+        accessibilityGrantStartedAt = nil
+        accessibilityResignedAt = nil
     }
 
     private func refreshPermissions() {
@@ -696,7 +744,42 @@ final class OnboardingController {
     }
 
     func grantAccessibility() {
+        // Same as Glance: show the system Accessibility prompt. Also open Settings
+        // so the user can enable Peek if the prompt was already dismissed.
         KeystrokeInjector.promptForAccessibility()
+        openSystemSettings(pane: "Privacy_Accessibility")
+        accessibilityGrantStartedAt = .now
+        pendingAccessibilityRelaunch = true
+        if isFirstRunFlow {
+            GlanceSettings.shared.onboardingResumeStep = .permissions
+        }
+    }
+
+    private func handleAccessibilityReturnFromSettings() {
+        guard pendingAccessibilityRelaunch, step == .permissions else { return }
+        // Ignore the immediate activate/deactivate churn from opening Settings.
+        guard let started = accessibilityGrantStartedAt,
+              ContinuousClock.now - started > .seconds(2.5) else { return }
+        guard let resigned = accessibilityResignedAt,
+              ContinuousClock.now - resigned > .seconds(1) else { return }
+
+        refreshPermissions()
+        if accessibilityGranted {
+            pendingAccessibilityRelaunch = false
+            return
+        }
+        pendingAccessibilityRelaunch = false
+        relaunchForAccessibilityTrust()
+    }
+
+    private func relaunchForAccessibilityTrust() {
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     func grantCamera() {
@@ -812,8 +895,8 @@ final class OnboardingController {
 
         let quality = result.quality ?? 0.3
         guard quality >= qualityFloor else { return }
-        // Only a 5-point alignment is reliably canonical.
-        guard result.alignmentTier == .fivePoint else { return }
+        // Prefer five-point; accept a strong frame without it so enrollment stays seamless.
+        if result.alignmentTier != .fivePoint, quality < 0.28 { return }
 
         let pose = classifyPose(yaw: yaw, pitch: pitch)
         currentPoseIndex = pose.rawValue
@@ -851,10 +934,18 @@ final class OnboardingController {
         markPoseProgress(pose)
 
         if EnrollmentPose.allCases.allSatisfy({ sampleCount(for: $0) >= samplesPerPose }) {
+            guard geometryTemplateCount >= minGeometryTemplates else {
+                await maybeSoftComplete()
+                return
+            }
             await finishEnrollment()
             return
         }
         await maybeSoftComplete()
+    }
+
+    private var geometryTemplateCount: Int {
+        collectedSamples.compactMap(\.geometry).count
     }
 
     private func markPoseProgress(_ pose: EnrollmentPose) {
@@ -866,13 +957,14 @@ final class OnboardingController {
         }
     }
 
-    /// Escape hatch: after ~28s, finish if coverage is "good enough" so one awkward
-    /// corner pose can't trap the user.
+    /// Escape hatch: after ~16s, finish if coverage is "good enough" so one awkward
+    /// corner pose can't trap the user — still requires a usable geometry vault.
     private func maybeSoftComplete() async {
         guard ContinuousClock.now - enrollmentStartedAt >= softCompleteAfter else { return }
         let posesWithAny = EnrollmentPose.allCases.filter { sampleCount(for: $0) >= 1 }.count
         guard posesWithAny >= softCompleteMinPoses,
-              collectedSamples.count >= softCompleteMinSamples else { return }
+              collectedSamples.count >= softCompleteMinSamples,
+              geometryTemplateCount >= minGeometryTemplates else { return }
         // Light any sectors that at least got one sample so the ring feels complete.
         for pose in EnrollmentPose.allCases where sampleCount(for: pose) >= 1 {
             if pose == .center {
@@ -988,7 +1080,7 @@ final class OnboardingController {
 
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: "Set up Peek")
+                try await SecureCredentialManager.unlockSession(reason: "Set up Peek")
             }.value
 
             // Only now that the session key exists can samples be encrypted and saved.

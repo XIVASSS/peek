@@ -114,7 +114,7 @@ struct SecurityNoticeStepView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 4)
 
-            Text("It uses your Mac's standard webcam and is designed for convenience, not high-security authentication.")
+            Text("Macs have no TrueDepth sensor. Peek stores a 3D landmark vault and runs silent anti-spoofing to block photos and screens — but a high-quality video replay can still fool a webcam. Convenience unlock, not a security upgrade.")
                 .font(GlanceTheme.Font.passwordCaption)
                 .foregroundStyle(GlanceTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
