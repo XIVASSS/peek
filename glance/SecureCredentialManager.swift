@@ -44,6 +44,9 @@ extension Notification.Name {
 enum SecureCredentialManager {
     nonisolated private static let sessionKeyAccount = "sessionKey"
     nonisolated private static let passwordBlobAccount = "encryptedPassword"
+    /// Set when the session key could not be Keychain-ACL gated (ad-hoc / missing entitlements).
+    /// Touch ID is then enforced in-app via LocalAuthentication before the key is read.
+    nonisolated private static let usesAppAuthGateKey = "PeekSettings.sessionKeyUsesAppAuthGate"
 
     // MARK: - Session state (thread-safe via NSLock)
 
@@ -117,21 +120,28 @@ enum SecureCredentialManager {
         KeychainManager.exists(account: passwordBlobAccount)
     }
 
-    /// Prompts Touch ID and unwraps the session key, creating it Touch-ID-gated on first run. Caches only after a real gated
-    /// read-back succeeds — `SecItemAdd` alone returns success even if the user hit Cancel on the auth UI, and bridging
-    /// `LAContext.evaluatePolicy` synchronously via a semaphore deadlocks the thread pool and crashes the process.
-    /// Must succeed before `savePassword`/`readPassword`. Blocking; call from a background task.
-    nonisolated static func unlockSession(reason: String) throws {
+    /// Prompts Touch ID and unwraps the session key, creating it Touch-ID-gated on first run.
+    /// Prefer Keychain `userPresence` ACL (Glance-style). If the OS rejects that for missing
+    /// entitlements (typical of ad-hoc DMGs), fall back to an ungated Keychain item gated by
+    /// async LocalAuthentication instead — never bridge `evaluatePolicy` with a semaphore.
+    /// Must succeed before `savePassword`/`readPassword`.
+    nonisolated static func unlockSession(reason: String) async throws {
         if cachedKey() != nil { return }
 
         // The existence check, not the read, decides whether a key gets created (load-bearing): a cancelled Touch ID prompt on
         // a user-presence item reports `errSecItemNotFound`, indistinguishable from no key — deciding on the read's error would
         // mint a fresh key (destroying the one that decrypts existing data) on every mis-tap.
         if KeychainManager.exists(account: sessionKeyAccount) {
-            let context = LAContext()
-            context.localizedReason = reason
-            let data = try KeychainManager.read(account: sessionKeyAccount, context: context)
-            setCachedKey(SymmetricKey(data: data))
+            if UserDefaults.standard.bool(forKey: usesAppAuthGateKey) {
+                try await authenticateUser(reason: reason)
+                let data = try KeychainManager.read(account: sessionKeyAccount)
+                setCachedKey(SymmetricKey(data: data))
+            } else {
+                let context = LAContext()
+                context.localizedReason = reason
+                let data = try KeychainManager.read(account: sessionKeyAccount, context: context)
+                setCachedKey(SymmetricKey(data: data))
+            }
             return
         }
 
@@ -142,18 +152,56 @@ enum SecureCredentialManager {
         }
 
         let key = SymmetricKey(size: .bits256)
-        let access = try KeychainManager.makeUserPresenceAccessControl()
-        try KeychainManager.save(
-            account: sessionKeyAccount,
-            data: key.withUnsafeBytes { Data($0) },
-            accessControl: access
-        )
+        let keyData = key.withUnsafeBytes { Data($0) }
 
-        // Read back through the gated path rather than trusting the write — only a real read proves authentication happened.
-        let readBackContext = LAContext()
-        readBackContext.localizedReason = reason
-        let data = try KeychainManager.read(account: sessionKeyAccount, context: readBackContext)
-        setCachedKey(SymmetricKey(data: data))
+        do {
+            let access = try KeychainManager.makeUserPresenceAccessControl()
+            try KeychainManager.save(
+                account: sessionKeyAccount,
+                data: keyData,
+                accessControl: access
+            )
+            UserDefaults.standard.set(false, forKey: usesAppAuthGateKey)
+
+            // Read back through the gated path rather than trusting the write — only a real read proves authentication happened.
+            let readBackContext = LAContext()
+            readBackContext.localizedReason = reason
+            let data = try KeychainManager.read(account: sessionKeyAccount, context: readBackContext)
+            setCachedKey(SymmetricKey(data: data))
+        } catch {
+            // Ad-hoc / unsigned builds cannot store userPresence ACL items
+            // (errSecMissingEntitlement / "A required entitlement is not present").
+            let isMissingEntitlement: Bool = {
+                if case let KeychainError.osStatus(status) = error {
+                    return status == errSecMissingEntitlement
+                }
+                let msg = (error as NSError).localizedDescription.lowercased()
+                return msg.contains("entitlement")
+            }()
+            guard isMissingEntitlement else { throw error }
+
+            try await authenticateUser(reason: reason)
+            try KeychainManager.save(account: sessionKeyAccount, data: keyData, accessControl: nil)
+            UserDefaults.standard.set(true, forKey: usesAppAuthGateKey)
+            setCachedKey(key)
+        }
+    }
+
+    nonisolated private static func authenticateUser(reason: String) async throws {
+        let context = LAContext()
+        var laError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &laError) else {
+            throw KeychainError.authenticationFailed
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
+                if success {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: error ?? KeychainError.authenticationFailed)
+                }
+            }
+        }
     }
 
     /// Checked without needing the key itself, so this stays answerable precisely when the key can't be read.
@@ -189,6 +237,7 @@ enum SecureCredentialManager {
     nonisolated static func deletePassword() throws {
         try KeychainManager.delete(account: passwordBlobAccount)
         try KeychainManager.delete(account: sessionKeyAccount)
+        UserDefaults.standard.removeObject(forKey: usesAppAuthGateKey)
         setCachedKey(nil)
     }
 }

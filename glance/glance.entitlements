@@ -2,11 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)com.xivasss.peek</string>
-	</array>
+	<key>com.apple.application-identifier</key>
+	<string>F92HBA9QAR.com.xivasss.peek</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>F92HBA9QAR</string>
 	<key>com.apple.security.device.camera</key>
 	<true/>
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>F92HBA9QAR.com.xivasss.peek</string>
+	</array>
 </dict>
 </plist>
