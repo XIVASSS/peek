@@ -69,8 +69,8 @@ Open the `.dmg` file and drag Peek to `/Applications`, then open it.
 |---|---|
 | **Enrollment** | Seamless coverage scan — turn your head naturally |
 | **Identity** | ArcFace **+** encrypted multi-pose geometry vault |
-| **Anti-photo** | Heavy liveness by default + texture/moire/screen deny cue |
-| **Match** | Stricter defaults; dual gate when vault exists |
+| **Anti-photo** | Heavy liveness by default + [MiniFASNet](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing) silent anti-spoof |
+| **Match** | Stricter defaults; dual ArcFace + geometry gate when vault exists |
 
 ## Features
 
@@ -137,6 +137,16 @@ Click Run or press `Cmd + R`. (Xcode project folder is still named `glance`; the
 - Forked from **[Glance](https://github.com/jonnyoo/glance)** by Jonathan Zhou (MIT)
 - **The Boring Notch** — for the notch window physics
 - **InsightFace** — the ArcFace model doing the recognition
+- **[Silent-Face-Anti-Spoofing / MiniFASNet](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing)** — on-device photo/screen rejection
+
+## Website
+
+Marketing site (Vercel): see [`website/`](website/).
+
+```bash
+cd website
+npx vercel --prod
+```
 
 ## License
 

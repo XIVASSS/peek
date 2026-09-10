@@ -1,0 +1,4 @@
+# Local / large binaries — download from GitHub Releases instead
+downloads/*.dmg
+.DS_Store
+.vercel
