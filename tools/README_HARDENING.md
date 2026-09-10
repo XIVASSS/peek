@@ -1,21 +1,16 @@
-# Hardening tools
-
-## Liveness selftest
-
-See root `README.md` — validates deny/confirm latching after cue changes.
+# Peek hardening tools
 
 ## MiniFASNet → Core ML
 
-1. Clone or download ONNX weights from [Silent-Face-Anti-Spoofing-onnx](https://github.com/QingHeYang/Silent-Face-Anti-Spoofing-onnx).
-2. `pip install coremltools onnx onnxruntime`
-3. Run:
+Silent anti-spoof model from [Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing) / [yakhyo/face-anti-spoofing](https://github.com/yakhyo/face-anti-spoofing).
 
 ```bash
-python3 tools/convert_minifasnet_coreml.py \
-  --onnx /path/to/2.7_80x80_MiniFASNetV2.onnx \
+# One-time: clone repo + download weights (see convert script defaults)
+python3 -m venv /tmp/peek-coreml-venv
+/tmp/peek-coreml-venv/bin/pip install coremltools torch
+/tmp/peek-coreml-venv/bin/python tools/convert_minifasnet_coreml.py \
+  --weights /path/to/MiniFASNetV2.pth \
   --out glance/Models/MiniFASNetV2.mlpackage
 ```
 
-4. Implement `MiniFASNetPAD.swift` (mirror `ArcFaceEmbedder`), call from `LivenessFeatureExtractor`, map score into `passiveSpoof` or a dedicated deny cue.
-
-The built-in `PassiveAntiSpoof` classical texture PAD ships without this step so the app builds offline.
+Xcode compiles the `.mlpackage` into `MiniFASNetV2.mlmodelc` in the app bundle. `MiniFASNetPAD` loads it at runtime as a deny cue (`silentAntiSpoof`) and Heavy-mode confirm cue (`silentLive`).

@@ -125,7 +125,7 @@ final class FaceLabController {
         sessionError = nil
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: "Authenticate to use Face Lab")
+                try await SecureCredentialManager.unlockSession(reason: "Authenticate to use Face Lab")
             }.value
             store.reloadIfUnlocked()
             log("Session unlocked.")
@@ -277,9 +277,7 @@ final class FaceLabController {
         if let best = scored.first {
             let verdict = (bestMatch != nil) ? "MATCH" : "no match"
             let staleNote = best.identity.isStale(comparedTo: embedder) ? " [STALE — re-enroll under current model]" : ""
-            let geomNote = best.identity.hasGeometryVault
-                ? String(format: " geom=%.3f", best.geometrySimilarity)
-                : " geom=n/a"
+            let geomNote = best.geometrySimilarity.map { String(format: " geom=%.3f", $0) } ?? " geom=n/a"
             log("Recognize: best = \(best.identity.name) centroid=\(String(format: "%.3f", best.centroidSimilarity)) max=\(String(format: "%.3f", best.maxSampleSimilarity))\(geomNote) -> \(verdict)\(staleNote)")
         }
     }

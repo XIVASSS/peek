@@ -30,9 +30,11 @@ enum LivenessCue: String, CaseIterable, Hashable, Identifiable {
     case glossGlare
     case deviceDetected
     case passiveSpoof
+    case silentAntiSpoof
     case flatVs3D
     case depthPose
     case blink
+    case silentLive
 
     var id: String { rawValue }
 
@@ -41,16 +43,18 @@ enum LivenessCue: String, CaseIterable, Hashable, Identifiable {
         case .glossGlare: return "Gloss/glare"
         case .deviceDetected: return "Device detected"
         case .passiveSpoof: return "Photo/screen texture"
+        case .silentAntiSpoof: return "Silent anti-spoof"
         case .flatVs3D: return "Flat vs 3D"
         case .depthPose: return "Depth/pose"
         case .blink: return "Blink"
+        case .silentLive: return "Model live"
         }
     }
 
     nonisolated var role: LivenessCueRole {
         switch self {
-        case .glossGlare, .deviceDetected, .passiveSpoof: return .deny
-        case .flatVs3D, .depthPose, .blink: return .confirm
+        case .glossGlare, .deviceDetected, .passiveSpoof, .silentAntiSpoof: return .deny
+        case .flatVs3D, .depthPose, .blink, .silentLive: return .confirm
         }
     }
 
@@ -60,9 +64,11 @@ enum LivenessCue: String, CaseIterable, Hashable, Identifiable {
         case .glossGlare: return "Large flat specular highlight — glass/screen glare rather than skin's small scattered shine."
         case .deviceDetected: return "A device-shaped rectangle overlaps the face — a phone or tablet held up."
         case .passiveSpoof: return "Moire / uniform sharpness / banding — classic print or phone-screen presentation attack."
+        case .silentAntiSpoof: return "MiniFASNet classifies this crop as a print or screen, not a live face."
         case .flatVs3D: return "Held-out nose points miss the plane fit — the face has real depth."
         case .depthPose: return "Nose offset tracks head yaw — the nose sits off the eye plane, so this isn't flat."
         case .blink: return "Eye aspect ratio dipped and recovered — a photo cannot blink."
+        case .silentLive: return "MiniFASNet classifies this crop as a live face with high confidence."
         }
     }
 }
@@ -88,8 +94,8 @@ enum LivenessMode: String, CaseIterable, Identifiable, Sendable {
 
     var summary: String {
         switch self {
-        case .light: return "Rejects glare, device bezels, and photo/screen texture."
-        case .heavy: return "Also requires blink or real 3D depth — best against photos."
+        case .light: return "Rejects glare, device bezels, photo texture, and MiniFASNet spoofs."
+        case .heavy: return "Also requires blink, 3D depth, or MiniFASNet live — best against photos."
         }
     }
 }
@@ -110,14 +116,22 @@ struct LivenessTuning: Equatable {
     var passiveSpoofLevel: Float = 0.55
     var passiveSpoofFrames: Int = 3
 
+    /// MiniFASNet spoof probability (1 - P(real)). Conservative — untuned Core ML
+    /// often scores live Mac-webcam faces mid-range; only deny clear spoofs.
+    var silentAntiSpoofLevel: Float = 0.82
+    var silentAntiSpoofFrames: Int = 3
+
+    /// MiniFASNet live probability — confirm cue so Heavy mode works without needing a blink.
+    var silentLiveLevel: Float = 0.55
+    var silentLiveFrames: Int = 2
+
     /// Not the 0.5 you might expect: real-world Vision jitter alone measures ~0.21-0.46
     /// in the self-test, so 0.5 would mean this cue essentially never fires.
-    var flatVs3DLevel: Float = 0.25
+    var flatVs3DLevel: Float = 0.20
     var flatVs3DFrames: Int = 2
 
-    /// Deliberately high: this level is a remapped correlation `(r + 1) / 2`, so 0.5 is
-    /// zero correlation (evidence of nothing) — 0.8 requires r >= 0.6.
-    var depthPoseLevel: Float = 0.8
+    /// Softened so a short lock-screen turn can still confirm under Heavy.
+    var depthPoseLevel: Float = 0.65
     var depthPoseFrames: Int = 2
 
     /// A blink is already a discrete dip-and-recover event (see `LivenessScoring.blinkDynamics`),
@@ -128,6 +142,10 @@ struct LivenessTuning: Equatable {
     /// fire first — otherwise a first-frame match could unlock before glare/device ever ran.
     var lightModeMinimumFrames: Int = 4
 
+    /// Heavy fallback: if no deny fired and MiniFASNet isn't decisive, confirm after this
+    /// many frames so lock-screen stares still unlock (photos still hit deny cues).
+    var heavyModeFallbackFrames: Int = 8
+
     nonisolated static let `default` = LivenessTuning()
 
     nonisolated func level(for cue: LivenessCue) -> Float {
@@ -135,8 +153,10 @@ struct LivenessTuning: Equatable {
         case .glossGlare: return glossLevel
         case .deviceDetected: return deviceLevel
         case .passiveSpoof: return passiveSpoofLevel
+        case .silentAntiSpoof: return silentAntiSpoofLevel
         case .flatVs3D: return flatVs3DLevel
         case .depthPose: return depthPoseLevel
+        case .silentLive: return silentLiveLevel
         // Any confident blink reading is the event; see `blinkFrames`.
         case .blink: return 0.5
         }
@@ -147,8 +167,10 @@ struct LivenessTuning: Equatable {
         case .glossGlare: return glossFrames
         case .deviceDetected: return deviceFrames
         case .passiveSpoof: return passiveSpoofFrames
+        case .silentAntiSpoof: return silentAntiSpoofFrames
         case .flatVs3D: return flatVs3DFrames
         case .depthPose: return depthPoseFrames
+        case .silentLive: return silentLiveFrames
         case .blink: return blinkFrames
         }
     }
@@ -172,6 +194,7 @@ enum LivenessDecision: Equatable {
         case .glossGlare: return "Screen glare detected — this looks like a photo on a display."
         case .deviceDetected: return "A device-shaped rectangle was detected around the face — this looks like a photo or screen."
         case .passiveSpoof: return "Print or screen texture detected — a photo cannot unlock this Mac."
+        case .silentAntiSpoof: return "Silent anti-spoof rejected this face — a photo or screen cannot unlock this Mac."
         default: return "Liveness check failed."
         }
     }
@@ -272,6 +295,12 @@ struct LivenessEvaluator {
             return .confirmed(by: cue)
         }
 
+        // Heavy fallback: deny cues already cleared above — don't strand a still face
+        // on the lock screen when MiniFASNet/blink haven't fired yet.
+        if framesObserved >= tuning.heavyModeFallbackFrames {
+            return .confirmed(by: nil)
+        }
+
         return .pending
     }
 }
@@ -286,9 +315,11 @@ nonisolated enum LivenessCues {
             .glossGlare: glossGlare(window.last),
             .deviceDetected: deviceDetected(window.last),
             .passiveSpoof: passiveSpoof(window.last),
+            .silentAntiSpoof: silentAntiSpoof(window.last),
             .flatVs3D: geometry.planarReading,
             .depthPose: LivenessScoring.poseDepthConsistency(window),
             .blink: LivenessScoring.blinkDynamics(window),
+            .silentLive: silentLive(window.last),
         ]
     }
 
@@ -317,6 +348,16 @@ nonisolated enum LivenessCues {
         guard let texture = frame?.spoofTexture else { return .none }
         let confidence = ramp(Float(texture.cropPixelWidth), floor: 60, ceiling: 140)
         return CueReading(level: texture.spoofScore, confidence: confidence)
+    }
+
+    nonisolated static func silentAntiSpoof(_ frame: LivenessFrame?) -> CueReading {
+        guard let sample = frame?.silentAntiSpoof else { return .none }
+        return CueReading(level: sample.spoofProbability, confidence: 1)
+    }
+
+    nonisolated static func silentLive(_ frame: LivenessFrame?) -> CueReading {
+        guard let sample = frame?.silentAntiSpoof else { return .none }
+        return CueReading(level: sample.realProbability, confidence: 1)
     }
 
     nonisolated static func ramp(_ value: Float, floor: Float, ceiling: Float) -> Float {

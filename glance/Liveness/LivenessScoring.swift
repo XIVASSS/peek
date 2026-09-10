@@ -36,6 +36,8 @@ struct LivenessFrame {
     let glare: GlareSample?
     /// Texture / moiré anti-spoof measurements; `nil` when no crop was available.
     let spoofTexture: SpoofTextureSample?
+    /// MiniFASNet silent anti-spoof reading; `nil` when the model isn't bundled or inference failed.
+    let silentAntiSpoof: SilentAntiSpoofSample?
 
     /// Explicit init so optional texture fields can default to `nil`.
     init(
@@ -49,7 +51,8 @@ struct LivenessFrame {
         hasReliableLandmarks: Bool,
         deviceOverlapFraction: CGFloat?,
         glare: GlareSample? = nil,
-        spoofTexture: SpoofTextureSample? = nil
+        spoofTexture: SpoofTextureSample? = nil,
+        silentAntiSpoof: SilentAntiSpoofSample? = nil
     ) {
         self.timestamp = timestamp
         self.landmarks = landmarks
@@ -62,6 +65,7 @@ struct LivenessFrame {
         self.deviceOverlapFraction = deviceOverlapFraction
         self.glare = glare
         self.spoofTexture = spoofTexture
+        self.silentAntiSpoof = silentAntiSpoof
     }
 }
 

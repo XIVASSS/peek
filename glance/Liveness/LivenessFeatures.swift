@@ -21,6 +21,7 @@ nonisolated enum LivenessFeatureExtractor {
         let deviceOverlap = DeviceBezelDetector.detect(in: frame, faceBoundingBox: face.boundingBox).faceOverlapFraction
         let glare = faceCrop.flatMap { GlareCueExtractor.extract(faceCrop: $0) }
         let spoofTexture = faceCrop.flatMap { PassiveAntiSpoof.extract(faceCrop: $0) }
+        let silent = MiniFASNetPAD.shared?.score(frame: frame, faceBox: face.boundingBox)
 
         guard let landmarks = face.landmarks else {
             return LivenessFrame(
@@ -31,7 +32,8 @@ nonisolated enum LivenessFeatureExtractor {
                 hasReliableLandmarks: false,
                 deviceOverlapFraction: deviceOverlap,
                 glare: glare,
-                spoofTexture: spoofTexture
+                spoofTexture: spoofTexture,
+                silentAntiSpoof: silent
             )
         }
 
@@ -61,7 +63,8 @@ nonisolated enum LivenessFeatureExtractor {
             hasReliableLandmarks: result.alignmentTier == .fivePoint,
             deviceOverlapFraction: deviceOverlap,
             glare: glare,
-            spoofTexture: spoofTexture
+            spoofTexture: spoofTexture,
+            silentAntiSpoof: silent
         )
     }
 }

@@ -38,3 +38,11 @@ struct SpoofTextureSample: Equatable, Sendable {
     /// Mid-band color banding / posterization hint.
     let bandingEnergy: Float
 }
+
+/// MiniFASNet reading for one frame. Fed into deny/confirm liveness cues.
+struct SilentAntiSpoofSample: Equatable, Sendable {
+    /// Softmax probability of the "real" class (index 1).
+    let realProbability: Float
+    /// 1 - realProbability — used as deny-cue level.
+    var spoofProbability: Float { max(0, min(1, 1 - realProbability)) }
+}
