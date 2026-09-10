@@ -141,11 +141,14 @@ Click Run or press `Cmd + R`. (Xcode project folder is still named `glance`; the
 
 ## Website
 
-Marketing site (Vercel): see [`website/`](website/).
+Live site: **https://xivasss.github.io/peek/**
+
+Source: [`website/`](website/). Download button points at [GitHub Releases](https://github.com/XIVASSS/peek/releases/latest/download/Peek.dmg).
 
 ```bash
 cd website
-npx vercel --prod
+python3 -m http.server 8080   # local preview
+npx vercel --prod             # optional Vercel deploy (requires `vercel login`)
 ```
 
 ## License
