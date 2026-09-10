@@ -55,13 +55,16 @@ if [[ -f "$STAGE/Peek.app/Contents/Resources/AppIcon.icns" ]]; then
   VOLICON_ARGS=(--volicon "$STAGE/Peek.app/Contents/Resources/AppIcon.icns")
 fi
 
+# Glance uses 800×440 window, iconSize 180, Retina bg (@1x + @2x).
+# Pass the 1x path; create-dmg auto-picks background@2x.png beside it.
 create-dmg \
   --volname "Peek" \
   "${VOLICON_ARGS[@]}" \
   --background "$BG" \
   --window-pos 200 120 \
   --window-size 800 440 \
-  --icon-size 128 \
+  --icon-size 180 \
+  --text-size 16 \
   --icon "Peek.app" 200 280 \
   --hide-extension "Peek.app" \
   --app-drop-link 600 280 \
