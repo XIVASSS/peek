@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Peek — Face unlock for Mac</title>
+    <meta
+      name="description"
+      content="Peek — Face unlock for Mac. On-device ArcFace, 3D geometry vault, and MiniFASNet anti-spoof. Look once. You’re in."
+    />
+    <meta name="theme-color" content="#f5f5f7" />
+    <link rel="icon" href="assets/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="assets/app-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero" id="top">
+      <div class="hero__content">
+        <h1 class="hero__title anim">Peek</h1>
+        <p class="hero__tag anim">Face unlock for Mac.</p>
+        <div class="btn-row anim">
+          <a class="btn btn-filled" href="#download">Download</a>
+          <a class="btn btn-outlined" href="#about">About</a>
+        </div>
+        <div class="hero__visual anim">
+          <div class="orbit" id="orbit">
+            <canvas class="space-grid" id="space-grid" aria-hidden="true"></canvas>
+            <img class="hero__icon" src="assets/icon-clean.png" alt="Peek" width="340" height="340" />
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="band band--onyx" id="flow">
+      <p class="band__line band__line--light anim">Look once. You’re in.</p>
+      <div class="face-stage anim" aria-hidden="true">
+        <svg class="face-svg face-svg--scan" viewBox="0 0 200 200" fill="none">
+          <g class="features" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+            <path class="eye" d="M82 86v14" />
+            <path class="eye" d="M118 86v14" />
+            <path class="nose" d="M100 94v18h10" />
+            <path class="mouth" d="M80 132c8 10 32 10 40 0" />
+          </g>
+          <circle class="ring" cx="100" cy="100" r="82" stroke="currentColor" stroke-width="1.25" />
+        </svg>
+      </div>
+    </section>
+
+    <section class="band band--onyx band--flush" id="grant">
+      <p class="band__line band__line--light anim">Grant. Enroll. Unlock.</p>
+      <div class="peek-stage anim" aria-label="Peek permissions">
+        <div class="peek-panel peek-panel--perms">
+          <h3 class="peek-panel__title">Permissions</h3>
+          <div class="peek-row">
+            <span class="peek-dot peek-dot--deny" aria-hidden="true"></span>
+            <div class="peek-row__text">
+              <span class="peek-row__name">Accessibility</span>
+              <span class="peek-row__detail">Allow Peek to unlock your Mac</span>
+            </div>
+            <span class="peek-grant">Grant</span>
+          </div>
+          <div class="peek-row">
+            <span class="peek-dot peek-dot--ok" aria-hidden="true"></span>
+            <div class="peek-row__text">
+              <span class="peek-row__name">Camera</span>
+              <span class="peek-row__detail">Allow Peek to recognize your face</span>
+            </div>
+            <span class="peek-grant peek-grant--done">Granted</span>
+          </div>
+          <div class="peek-actions">
+            <span class="peek-pill peek-pill--secondary">Back</span>
+            <span class="peek-pill peek-pill--muted">Next</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band--onyx band--flush" id="enroll">
+      <p class="band__line band__line--light anim">Set up Face Recognition.</p>
+      <div class="peek-stage anim" aria-label="Peek face recognition setup">
+        <div class="peek-panel peek-panel--setup">
+          <div class="peek-setup__top">
+            <div class="peek-setup__copy">
+              <h3 class="peek-panel__title">Set up Face<br />Recognition</h3>
+              <p class="peek-panel__sub">Follow the directions<br />shown on the screen</p>
+            </div>
+            <svg class="peek-glyph" viewBox="0 0 120 120" fill="none" aria-hidden="true">
+              <path d="M34 28h-8a6 6 0 0 0-6 6v8" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+              <path d="M86 28h8a6 6 0 0 1 6 6v8" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+              <path d="M34 92h-8a6 6 0 0 1-6-6v-8" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+              <path d="M86 92h8a6 6 0 0 0 6-6v-8" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+              <path d="M48 52v10" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+              <path d="M72 52v10" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+              <path d="M60 56v12h8" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M46 82c6 8 22 8 28 0" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+            </svg>
+          </div>
+          <div class="peek-actions">
+            <span class="peek-pill peek-pill--secondary">Back</span>
+            <span class="peek-pill peek-pill--primary">Next</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band--onyx band--flush" id="notch">
+      <p class="band__line band__line--light anim">Starts in the notch.</p>
+      <div class="peek-stage anim" aria-label="Peek welcome">
+        <div class="peek-panel peek-panel--welcome">
+          <div class="peek-welcome__copy">
+            <h3 class="peek-panel__title">Peek</h3>
+            <p class="peek-panel__sub">Face Unlock for Mac</p>
+          </div>
+          <span class="peek-pill peek-pill--primary peek-pill--wide">Next</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="band band--onyx band--flush" id="about">
+      <p class="band__line band__line--light anim">Built for Mac. Honest about Face&nbsp;ID.</p>
+      <div class="about anim">
+        <p class="about__lead">
+          Peek is a hardened fork of Glance — same notch UI, smoother enrollment,
+          and a stronger anti-photo core.
+        </p>
+        <ul class="about__list">
+          <li><strong>Seamless enroll</strong> — turn your head; no exact-angle hunting.</li>
+          <li><strong>3D geometry vault</strong> — multi-pose landmark map, encrypted on-device.</li>
+          <li><strong>MiniFASNet</strong> — silent anti-spoof to reject photos and screens.</li>
+          <li><strong>On-device only</strong> — face data and password never leave your Mac.</li>
+        </ul>
+        <p class="about__note">
+          Macs have no TrueDepth. Peek blocks printed and phone-screen photos with high confidence,
+          but a high-quality video replay can still fool a webcam. Convenience unlock — not a Touch&nbsp;ID replacement.
+        </p>
+      </div>
+    </section>
+
+    <section class="download" id="download">
+      <img class="download__icon anim" src="assets/icon-clean.png" alt="" width="72" height="72" />
+      <h2 class="download__title anim">Download Peek</h2>
+      <p class="download__sub anim">macOS 15 or later · Universal</p>
+      <div class="btn-row anim">
+        <a class="btn btn-filled" href="https://github.com/XIVASSS/peek/releases/latest/download/Peek.dmg">Download DMG</a>
+        <a class="btn btn-outlined" href="https://github.com/XIVASSS/peek" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <p class="download__meta anim">Peek 1.1.0 · MIT License</p>
+    </section>
+
+    <footer class="footer">
+      <p>
+        Designed &amp; built by <strong>Protyasish Majumder</strong>.
+        Peek is not affiliated with Apple Inc.
+      </p>
+      <p class="footer__legal">
+        Copyright © <span id="year"></span> Protyasish Majumder.
+        Apple, Mac, MacBook, Face&nbsp;ID, and Touch&nbsp;ID are trademarks of Apple Inc.
+      </p>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
