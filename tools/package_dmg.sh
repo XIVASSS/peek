@@ -60,11 +60,11 @@ create-dmg \
   "${VOLICON_ARGS[@]}" \
   --background "$BG" \
   --window-pos 200 120 \
-  --window-size 660 400 \
+  --window-size 800 440 \
   --icon-size 128 \
-  --icon "Peek.app" 160 250 \
+  --icon "Peek.app" 200 280 \
   --hide-extension "Peek.app" \
-  --app-drop-link 500 250 \
+  --app-drop-link 600 280 \
   --no-internet-enable \
   "$DIST/Peek.dmg" \
   "$STAGE"
