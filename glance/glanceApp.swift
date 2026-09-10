@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     /// Held so `menuNeedsUpdate` can refresh this row in place rather than rebuilding the whole menu.
     private var sessionMenuItem: NSMenuItem?
+    /// Shows whether password typing (Accessibility) is allowed for this binary.
+    private var accessibilityMenuItem: NSMenuItem?
     /// Bridges SwiftUI's `openWindow(\.settings)` action in from `glanceApp.body`, since this plain `NSObject` has no
     /// `@Environment` of its own. Bound from the scene body (not `onAppear`) so it's ready before Settings has ever shown —
     /// `NSApp.windows` stops containing the window once fully closed, so only `openWindow(id:)` can reliably re-create it.
@@ -92,6 +94,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sessionItem.target = self
         menu.addItem(sessionItem)
         sessionMenuItem = sessionItem
+
+        let accessibilityItem = NSMenuItem(title: "", action: #selector(fixAccessibilityPermission), keyEquivalent: "")
+        accessibilityItem.target = self
+        menu.addItem(accessibilityItem)
+        accessibilityMenuItem = accessibilityItem
 
         let settingsItem = NSMenuItem(title: "Settings", action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
@@ -186,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Fires right before the menu opens — simpler than keeping an `NSMenuItem` reactively bound to `isSessionUnlocked`.
     func menuNeedsUpdate(_ menu: NSMenu) {
         updateSessionMenuItem()
+        updateAccessibilityMenuItem()
     }
 
     private func updateSessionMenuItem() {
@@ -196,6 +204,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             systemSymbolName: isUnlocked ? "lock.open.fill" : "lock.fill",
             accessibilityDescription: nil
         )
+    }
+
+    private func updateAccessibilityMenuItem() {
+        guard let accessibilityMenuItem else { return }
+        environment.pocController.refreshAccessibilityStatus()
+        let trusted = environment.pocController.accessibilityGranted
+        accessibilityMenuItem.title = trusted
+            ? "Accessibility On"
+            : "Accessibility Off — Fix…"
+        accessibilityMenuItem.image = NSImage(
+            systemSymbolName: trusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+            accessibilityDescription: nil
+        )
+        accessibilityMenuItem.isEnabled = !trusted
+        accessibilityMenuItem.action = trusted ? nil : #selector(fixAccessibilityPermission)
+        accessibilityMenuItem.target = trusted ? nil : self
+    }
+
+    /// Opens System Settings and relaunches Peek so `AXIsProcessTrusted()` picks up a fresh grant
+    /// (required after every re-sign / reinstall of an ad-hoc build).
+    @objc private func fixAccessibilityPermission() {
+        KeystrokeInjector.promptForAccessibility()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        let alert = NSAlert()
+        alert.messageText = "Enable Peek in Accessibility"
+        alert.informativeText = """
+        In System Settings → Privacy & Security → Accessibility:
+        1. Turn Peek OFF if it’s listed, then ON again (or click +, pick /Applications/Peek.app).
+        2. Click Relaunch below — unlock will not type your password until Peek restarts with trust.
+        """
+        alert.addButton(withTitle: "Relaunch Peek")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     /// Locking is immediate; unlocking prompts Touch ID, so this can't be a plain synchronous action for that branch.

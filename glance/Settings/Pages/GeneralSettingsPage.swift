@@ -18,11 +18,14 @@ struct GeneralSettingsPage: View {
     /// Refreshed when the app regains focus, so granting the permission in
     /// System Settings clears the prompt below without a relaunch.
     @State private var inputMonitoring = SpaceKeyMonitor.inputMonitoringAccess
+    @State private var accessibilityGranted = KeystrokeInjector.isAccessibilityTrusted()
 
     /// True once "On space" is selected but glance can't read the keyboard yet.
     private var needsInputMonitoring: Bool {
         settings.unlockTriggers.contains(.onSpace) && inputMonitoring != .granted
     }
+
+    private var needsAccessibility: Bool { !accessibilityGranted }
 
     /// Dev-only: under Xcode the reading above is Xcode's permission, not
     /// glance's, so it's meaningless. See `SpaceKeyMonitor.isLaunchedByXcode`.
@@ -61,6 +64,10 @@ struct GeneralSettingsPage: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             inputMonitoring = SpaceKeyMonitor.inputMonitoringAccess
+            accessibilityGranted = KeystrokeInjector.isAccessibilityTrusted()
+        }
+        .onAppear {
+            accessibilityGranted = KeystrokeInjector.isAccessibilityTrusted()
         }
         .onChange(of: settings.unlockTriggers) { oldValue, newValue in
             // Only prompt on the transition into selecting "On space".
@@ -77,7 +84,9 @@ struct GeneralSettingsPage: View {
         if let launchAtLoginError {
             SettingsCaption(text: launchAtLoginError)
         }
-        if hasInheritedXcodePermission {
+        if needsAccessibility {
+            accessibilityNotice()
+        } else if hasInheritedXcodePermission {
             SettingsCaption(text: "Running from Xcode — permission checks resolve against Xcode’s grants, not Peek’s, so this reading is meaningless. Launch Peek.app on its own to see the real state.")
         } else if needsInputMonitoring {
             inputMonitoringNotice()
@@ -122,6 +131,23 @@ struct GeneralSettingsPage: View {
                     isEnabled: settings.showUnlockAnimation
                 )
             }
+        }
+    }
+
+    /// Password typing requires Accessibility for this exact Peek binary.
+    private func accessibilityNotice() -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingsCaption(text: "Unlock can’t type your password — Accessibility is off for this Peek build. Turn Peek on in Privacy & Security → Accessibility, then quit and reopen Peek (reinstalling resets this).")
+            Button("Open Accessibility settings") {
+                KeystrokeInjector.promptForAccessibility()
+                openSystemSettings(pane: "Privacy_Accessibility")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    accessibilityGranted = KeystrokeInjector.isAccessibilityTrusted()
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            .foregroundStyle(GlanceTheme.accent)
         }
     }
 
