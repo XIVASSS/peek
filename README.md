@@ -42,6 +42,12 @@ Built as a hardened fork of [Glance](https://github.com/jonnyoo/glance) — same
 
 Open the `.dmg` file and drag Peek to `/Applications`, then open it.
 
+> **If macOS says Peek is “damaged”:** that’s Gatekeeper blocking an unsigned download (not a bad file). Drag Peek to Applications, then double-click **If Peek won't open** on the disk image — or run:
+> ```bash
+> xattr -cr /Applications/Peek.app && open /Applications/Peek.app
+> ```
+> (Apple notarization removes this step; requires a Developer ID.)
+
 ## Permissions
 
 | Permission | Why |

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Build Peek.app and wrap it in a distributable .dmg
+# Build a Glance-style Peek.dmg.
 #
-# Usage:
-#   ./tools/package_dmg.sh
-#   ./tools/package_dmg.sh --sign "Developer ID Application: Your Name (TEAMID)"
-#
-# Output: dist/Peek-<version>.dmg
+# Usage: ./tools/package_dmg.sh
+# Output: dist/Peek.dmg  and  dist/Peek-<version>.dmg
 
 set -euo pipefail
 
@@ -17,19 +14,10 @@ SCHEME="glance"
 CONFIG="Release"
 DERIVED="$ROOT/build/DerivedData"
 DIST="$ROOT/dist"
-STAGE="$DIST/dmg-stage"
-DMG_NAME="Peek-${VERSION}.dmg"
-SIGN_IDENTITY=""
+STAGE="$DIST/stage-app"
+BG="$ROOT/docs/dmg/background.png"
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --sign) SIGN_IDENTITY="$2"; shift 2 ;;
-    --version) VERSION="$2"; DMG_NAME="Peek-${VERSION}.dmg"; shift 2 ;;
-    *) echo "Unknown arg: $1"; exit 1 ;;
-  esac
-done
-
-echo "==> Building Peek ($CONFIG)"
+echo "==> Building Peek ($CONFIG, unsigned then ad-hoc sign)"
 xcodebuild \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
@@ -39,32 +27,71 @@ xcodebuild \
   CODE_SIGN_IDENTITY="" \
   build
 
-APP_SRC="$(find "$DERIVED/Build/Products/$CONFIG" -maxdepth 1 \( -name 'Peek.app' -o -name 'glance.app' \) -print -quit)"
-if [[ -z "$APP_SRC" || ! -d "$APP_SRC" ]]; then
-  echo "Could not find Peek.app under $DERIVED/Build/Products/$CONFIG"
-  ls -la "$DERIVED/Build/Products/$CONFIG" || true
+APP_SRC="$DERIVED/Build/Products/$CONFIG/Peek.app"
+[[ -d "$APP_SRC" ]] || { echo "Missing $APP_SRC"; exit 1; }
+[[ -f "$BG" ]] || { echo "Missing $BG"; exit 1; }
+
+echo "==> Staging"
+rm -rf "$STAGE"
+mkdir -p "$STAGE" "$DIST"
+cp -R "$APP_SRC" "$STAGE/Peek.app"
+
+# Empty entitlements — keychain-access-groups needs a real team cert.
+cat > "$DIST/adhoc.entitlements" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict/></plist>
+EOF
+
+xattr -cr "$STAGE/Peek.app" || true
+codesign --force --deep --sign - --entitlements "$DIST/adhoc.entitlements" "$STAGE/Peek.app"
+codesign --verify --deep --strict "$STAGE/Peek.app"
+
+# Helps when Gatekeeper says "damaged" after download (quarantine + unsigned).
+cat > "$STAGE/If Peek won't open.command" <<'CMD'
+#!/bin/bash
+cd "$(dirname "$0")"
+TARGET=""
+if [[ -d "/Applications/Peek.app" ]]; then
+  TARGET="/Applications/Peek.app"
+elif [[ -d "./Peek.app" ]]; then
+  TARGET="./Peek.app"
+fi
+if [[ -z "$TARGET" ]]; then
+  osascript -e 'display alert "Peek" message "Drag Peek into Applications first, then run this again." as informational'
   exit 1
 fi
+xattr -cr "$TARGET"
+open "$TARGET"
+CMD
+chmod +x "$STAGE/If Peek won't open.command"
 
-echo "==> Staging DMG contents from $APP_SRC"
-rm -rf "$STAGE" "$DIST/$DMG_NAME"
-mkdir -p "$STAGE" "$DIST"
-rm -rf "$STAGE/Peek.app"
-cp -R "$APP_SRC" "$STAGE/Peek.app"
-ln -sf /Applications "$STAGE/Applications"
+echo "==> Creating DMG"
+rm -f "$DIST/Peek.dmg" "$DIST/Peek-${VERSION}.dmg" "$DIST/rw."*.dmg
 
-if [[ -n "$SIGN_IDENTITY" ]]; then
-  echo "==> Codesigning Peek.app"
-  codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$STAGE/Peek.app"
+VOLICON_ARGS=()
+if [[ -f "$STAGE/Peek.app/Contents/Resources/AppIcon.icns" ]]; then
+  VOLICON_ARGS=(--volicon "$STAGE/Peek.app/Contents/Resources/AppIcon.icns")
 fi
 
-echo "==> Creating $DMG_NAME"
-hdiutil create \
-  -volname "Peek" \
-  -srcfolder "$STAGE" \
-  -ov -format UDZO \
-  "$DIST/$DMG_NAME"
+create-dmg \
+  --volname "Peek" \
+  "${VOLICON_ARGS[@]}" \
+  --background "$BG" \
+  --window-pos 200 120 \
+  --window-size 660 400 \
+  --icon-size 100 \
+  --icon "Peek.app" 160 250 \
+  --hide-extension "Peek.app" \
+  --app-drop-link 500 250 \
+  --icon "If Peek won't open.command" 330 355 \
+  --no-internet-enable \
+  "$DIST/Peek.dmg" \
+  "$STAGE"
 
-rm -rf "$STAGE"
-echo "Done: $DIST/$DMG_NAME"
-ls -lh "$DIST/$DMG_NAME"
+cp -f "$DIST/Peek.dmg" "$DIST/Peek-${VERSION}.dmg"
+xattr -cr "$DIST/Peek.dmg" "$DIST/Peek-${VERSION}.dmg" || true
+rm -f "$DIST/adhoc.entitlements"
+
+echo "Done:"
+ls -lh "$DIST/Peek.dmg" "$DIST/Peek-${VERSION}.dmg"
