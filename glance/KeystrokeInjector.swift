@@ -3,6 +3,7 @@
 //  glance
 //
 //  Synthesizes keystrokes via CGEvent, posted at the HID tap so they reach the lock screen's secure text field.
+//  Matches upstream Glance (https://github.com/jonnyoo/glance): type into whatever has focus, then Return.
 //
 
 import Foundation
@@ -16,7 +17,7 @@ enum KeystrokeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessibilityNotGranted:
-            return "Accessibility permission required. Open System Settings → Privacy & Security → Accessibility and enable glance."
+            return "Accessibility permission required. Open System Settings → Privacy & Security → Accessibility and enable Peek."
         case .eventCreationFailed:
             return "Couldn't create CGEvent for keystroke."
         }
@@ -47,9 +48,13 @@ enum KeystrokeInjector {
             throw KeystrokeError.eventCreationFailed
         }
         let source = CGEventSource(stateID: .hidSystemState)
+        // Brief settle so the lock-screen password field keeps focus after the
+        // notch/camera UI appears (Return-before-type risked submitting empty).
+        Thread.sleep(forTimeInterval: 0.15)
         for char in text {
             try postUnicode(String(char), source: source)
         }
+        Thread.sleep(forTimeInterval: 0.06)
         try postReturn(source: source)
     }
 

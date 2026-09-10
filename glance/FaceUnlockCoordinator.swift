@@ -36,7 +36,7 @@ final class FaceUnlockCoordinator {
         TimeInterval(GlanceSettings.shared.faceDetectionSeconds)
     }
     /// Requires several consecutive below-threshold frames so a single bad-angle read doesn't trigger the failure animation.
-    private let wrongFaceStreakThreshold = 6
+    private let wrongFaceStreakThreshold = 15
 
     private(set) var statusMessage = "Idle"
     private(set) var lastOutcome: String?
@@ -106,7 +106,13 @@ final class FaceUnlockCoordinator {
         // Runs before the hasArmedForCurrentLock guard — the space monitor's lifetime is tied to "locked + opted in," not to whether a scan already ran.
         updateSpaceMonitor()
 
-        guard isEnabled, !hasArmedForCurrentLock else { return }
+        guard isEnabled else { return }
+
+        // One arm per lock session (Glance behavior). Hover / Auto retry restart the
+        // scan without re-arming. Do NOT clear this when the pill is merely `.closed` —
+        // that re-ran the full unlock animation in a loop while still locked.
+        guard !hasArmedForCurrentLock else { return }
+
         guard let signal = requiredTrigger(for: lockMonitor.lastEvent) else { return }
         // A pinned display that isn't connected bails entirely rather than showing up elsewhere; "Main display" (nil) always resolves.
         guard NotchGeometry.preferredScreen() != nil else { return }
@@ -236,6 +242,10 @@ final class FaceUnlockCoordinator {
     private func runScanCycle(generation: Int) async {
         guard LockMonitor.isScreenActuallyLocked() else { return }
 
+        // Keep minimum face size + identities in sync with Settings for this scan.
+        FaceRecognitionPipeline.minimumProminentFaceWidth = GlanceSettings.shared.minimumFaceWidth
+        FaceEnrollmentStore.shared.reloadIfUnlocked()
+
         await camera.start()
         guard generation == scanGeneration else { return }
 
@@ -263,9 +273,16 @@ final class FaceUnlockCoordinator {
 
         switch outcome {
         case .matched:
-            // The unlock already happened inside observeScanWindow — this only decides whether anything is shown about it.
             if showsUI {
                 NotchOverlayController.shared.finish(success: true)
+            }
+        case .injectFailed:
+            statusMessage = "Recognized you, but couldn't type the password — check Accessibility for Peek."
+            if showsUI {
+                NotchOverlayController.shared.finish(success: false)
+                scheduleAutoRetryIfEnabled(after: NotchOverlayController.shared.failureHoldDuration)
+            } else {
+                scheduleAutoRetryIfEnabled(after: headlessRetryDelay)
             }
         case .consistentlyWrongFace:
             statusMessage = "Face not recognized."
@@ -288,7 +305,6 @@ final class FaceUnlockCoordinator {
         case .noResolution:
             statusMessage = "No face detected."
             if showsUI {
-                // No explicit collapse call: NotchOverlayController's own scanning timeout fires on the same mark and collapses itself.
                 statusMessage = "No face detected — hover the notch to try again."
                 scheduleAutoRetryIfEnabled(after: NotchOverlayController.shared.collapseAnimationDuration)
             } else {
@@ -316,9 +332,10 @@ final class FaceUnlockCoordinator {
 
     private enum ScanOutcome {
         case matched
-        case consistentlyWrongFace
+        case injectFailed
         /// A deny cue (glare, device rectangle) fired — actively rejected as a spoof regardless of match. Same failure path as `.consistentlyWrongFace`.
         case spoofSuspected
+        case consistentlyWrongFace
         case noResolution
     }
 
@@ -376,6 +393,7 @@ final class FaceUnlockCoordinator {
                 case .denied:
                     // Overrides everything, including a match and any confirmation that already happened.
                     lastOutcome = snapshot.decision.denialReason
+                    UnlockDiagnostics.log("liveness DENIED: \(lastOutcome ?? "spoof")")
                     return .spoofSuspected
                 case .confirmed(let cue):
                     livenessConfirmed = true
@@ -392,12 +410,26 @@ final class FaceUnlockCoordinator {
                 against: FaceEnrollmentStore.shared.activeIdentities,
                 liveGeometry: liveGeometry
             )
-            let matched = pipeline.bestMatch(in: scored, threshold: matchThreshold)
+            // Face-ID-class: ArcFace + geometry vault when enrolled with 3D templates.
+            let matched = pipeline.bestMatch(
+                in: scored,
+                threshold: matchThreshold,
+                requireGeometryWhenAvailable: true
+            )
 
             if let matched {
                 consecutiveWrongFaceFrames = 0
                 readyMatch = matched
             } else {
+                // Keep the best ArcFace candidate for diagnostics even when below threshold.
+                if let best = scored.first, !best.identity.isStale(comparedTo: pipeline.embedder) {
+                    let geom = best.geometrySimilarity.map { String(format: "%.3f", $0) } ?? "n/a"
+                    UnlockDiagnostics.log(
+                        "no-match best=\(best.identity.name) c=\(String(format: "%.3f", best.centroidSimilarity)) max=\(String(format: "%.3f", best.maxSampleSimilarity)) geom=\(geom) vault=\(best.identity.hasGeometryVault) thr=\(String(format: "%.3f", matchThreshold)) n=\(FaceEnrollmentStore.shared.activeIdentities.count) ax=\(KeystrokeInjector.isAccessibilityTrusted())"
+                    )
+                } else if FaceEnrollmentStore.shared.activeIdentities.isEmpty {
+                    UnlockDiagnostics.log("no-match: activeIdentities empty locked=\(FaceEnrollmentStore.shared.isLocked)")
+                }
                 readyMatch = nil
                 consecutiveWrongFaceFrames += 1
                 if consecutiveWrongFaceFrames >= wrongFaceStreakThreshold {
@@ -405,17 +437,52 @@ final class FaceUnlockCoordinator {
                 }
             }
 
-            if let readyMatch, livenessConfirmed {
+            if let match = readyMatch, livenessConfirmed {
                 statusMessage = "Recognized — unlocking…"
                 let livenessNote = livenessEnabled
                     ? (confirmingCue.map { "live via \($0.title)" } ?? "liveness clear")
                     : "liveness off"
-                let geometryNote = readyMatch.identity.hasGeometryVault
-                    ? String(format: "geom %.3f", readyMatch.geometrySimilarity)
-                    : "geom n/a"
-                lastOutcome = "Matched \(readyMatch.identity.name) at \(String(format: "%.3f", readyMatch.centroidSimilarity)), \(geometryNote), \(livenessNote)."
-                await pocController.injectStoredPassword(requireAuthoritativeLock: true)
-                return .matched
+                let geometryNote = match.geometrySimilarity.map { String(format: "geom %.3f", $0) } ?? "geom n/a"
+                lastOutcome = "Matched \(match.identity.name) at \(String(format: "%.3f", match.centroidSimilarity)), \(geometryNote), \(livenessNote)."
+                UnlockDiagnostics.log(lastOutcome ?? "matched")
+
+                // Glance path: type into whatever has focus while the notch stays up.
+                // Do NOT hide the overlay or click the password field — that steals focus.
+                // Glance: always attempt inject; POCController prompts for Accessibility if missing.
+                let injected = await pocController.injectStoredPassword(requireAuthoritativeLock: true, attempts: 2)
+                if !injected, !KeystrokeInjector.isAccessibilityTrusted() {
+                    UnlockDiagnostics.log("inject blocked: Accessibility not trusted — abort scan (enable Peek in Accessibility, then relaunch)")
+                    statusMessage = "Enable Accessibility for Peek, then relaunch."
+                    lastOutcome = statusMessage
+                    return .injectFailed
+                }
+                if injected {
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    if !LockMonitor.isScreenActuallyLocked() {
+                        UnlockDiagnostics.log("inject OK — screen unlocked")
+                        return .matched
+                    }
+                    // Password was typed once; keep watching without restarting the
+                    // notch animation (another beginScanning would replay it).
+                    UnlockDiagnostics.log("inject posted but screen still locked — wait without re-animating")
+                    readyMatch = nil
+                    consecutiveWrongFaceFrames = 0
+                    let waitDeadline = Date().addingTimeInterval(2.5)
+                    while Date() < waitDeadline {
+                        if !LockMonitor.isScreenActuallyLocked() {
+                            UnlockDiagnostics.log("inject OK — screen unlocked (delayed)")
+                            return .matched
+                        }
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                    }
+                    // Still locked after typing — likely wrong password; fail once, don't loop animation.
+                    UnlockDiagnostics.log("inject posted but screen still locked after wait")
+                    return .injectFailed
+                }
+                UnlockDiagnostics.log("inject FAILED: \(pocController.statusMessage) ax=\(KeystrokeInjector.isAccessibilityTrusted())")
+                readyMatch = nil
+                consecutiveWrongFaceFrames = 0
+                continue
             }
 
             try? await Task.sleep(nanoseconds: 20_000_000)

@@ -43,7 +43,7 @@ final class POCController {
         sessionError = nil
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: "Authenticate to set up or use Peek")
+                try await SecureCredentialManager.unlockSession(reason: "Authenticate to set up or use Peek")
             }.value
             isSessionUnlocked = true
         } catch {
@@ -90,33 +90,47 @@ final class POCController {
     /// buffer before returning. When `requireAuthoritativeLock` is true (the
     /// auto-trigger path), refuses to inject unless the CGSession dictionary
     /// confirms the screen is actually locked.
-    func injectStoredPassword(requireAuthoritativeLock: Bool = false) async {
+    /// Returns `true` only when keystrokes were posted successfully.
+    @discardableResult
+    func injectStoredPassword(requireAuthoritativeLock: Bool = false, attempts: Int = 1) async -> Bool {
         guard KeystrokeInjector.isAccessibilityTrusted() else {
-            statusMessage = "Accessibility not granted — open System Settings and enable Peek."
-            return
+            // Request the system Accessibility permission the same way Glance does
+            // during setup — so unlock isn't a silent no-op after a face match.
+            KeystrokeInjector.promptForAccessibility()
+            statusMessage = "Accessibility not granted — enable Peek in System Settings, then relaunch."
+            UnlockDiagnostics.log("inject blocked: Accessibility not trusted (prompted)")
+            return false
         }
         guard SecureCredentialManager.isSessionUnlocked else {
             statusMessage = "Session locked — authenticate with Touch ID first."
-            return
+            return false
         }
 
         if requireAuthoritativeLock {
             guard LockMonitor.isScreenActuallyLocked() else {
                 statusMessage = "Skipped: CGSession reports screen is not actually locked."
-                return
+                return false
             }
         }
 
-        statusMessage = "Injecting…"
-        do {
-            try await Task.detached(priority: .userInitiated) {
-                var bytes = try SecureCredentialManager.readPassword()
-                defer { bytes.resetBytes(in: 0..<bytes.count) }
-                try KeystrokeInjector.typeAndReturn(bytes)
-            }.value
-            statusMessage = "Injected stored password + Return at \(Date().formatted(date: .omitted, time: .standard))"
-        } catch {
-            statusMessage = "Injection failed: \(error.localizedDescription)"
+        let tries = max(1, attempts)
+        for attempt in 1...tries {
+            statusMessage = tries > 1 ? "Injecting… (\(attempt)/\(tries))" : "Injecting…"
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    var bytes = try SecureCredentialManager.readPassword()
+                    defer { bytes.resetBytes(in: 0..<bytes.count) }
+                    try KeystrokeInjector.typeAndReturn(bytes)
+                }.value
+                statusMessage = "Injected stored password + Return at \(Date().formatted(date: .omitted, time: .standard))"
+                return true
+            } catch {
+                statusMessage = "Injection failed: \(error.localizedDescription)"
+                if attempt < tries {
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                }
+            }
         }
+        return false
     }
 }

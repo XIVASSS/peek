@@ -12,6 +12,7 @@
 import AppKit
 import SwiftUI
 import Observation
+import AVFoundation
 
 @Observable
 @MainActor
@@ -163,6 +164,32 @@ final class NotchOverlayController {
             try? await Task.sleep(for: self?.collapseAnimationDuration ?? .milliseconds(700))
             guard let self, !self.isArmed, self.phase == .closed else { return }
             self.windowController.hide()
+        }
+    }
+
+    /// Hide the notch briefly so loginwindow's password field regains focus before
+    /// Peek types the password. Call `arm`/`beginScanning` again if typing fails.
+    func prepareForPasswordInjection() {
+        scanTimeoutTask?.cancel(); scanTimeoutTask = nil
+        windowController.setInteractive(false)
+        // Undelegate + hide so loginwindow receives keystrokes.
+        windowController.hide()
+    }
+
+    /// Re-show the lock-screen overlay after a failed password inject attempt.
+    func resumeAfterFailedInject() {
+        guard LockMonitor.isScreenActuallyLocked() else { return }
+        geometry = windowController.currentGeometry
+        content = .scan(.idle)
+        phase = .scanning
+        isArmed = true
+        windowController.show()
+        updateInteractivity()
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: self?.scanTimeoutDuration ?? .seconds(5))
+            guard let self, !Task.isCancelled, self.phase == .scanning else { return }
+            await self.collapse()
         }
     }
 
