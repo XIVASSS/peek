@@ -47,25 +47,6 @@ xattr -cr "$STAGE/Peek.app" || true
 codesign --force --deep --sign - --entitlements "$DIST/adhoc.entitlements" "$STAGE/Peek.app"
 codesign --verify --deep --strict "$STAGE/Peek.app"
 
-# Helps when Gatekeeper says "damaged" after download (quarantine + unsigned).
-cat > "$STAGE/If Peek won't open.command" <<'CMD'
-#!/bin/bash
-cd "$(dirname "$0")"
-TARGET=""
-if [[ -d "/Applications/Peek.app" ]]; then
-  TARGET="/Applications/Peek.app"
-elif [[ -d "./Peek.app" ]]; then
-  TARGET="./Peek.app"
-fi
-if [[ -z "$TARGET" ]]; then
-  osascript -e 'display alert "Peek" message "Drag Peek into Applications first, then run this again." as informational'
-  exit 1
-fi
-xattr -cr "$TARGET"
-open "$TARGET"
-CMD
-chmod +x "$STAGE/If Peek won't open.command"
-
 echo "==> Creating DMG"
 rm -f "$DIST/Peek.dmg" "$DIST/Peek-${VERSION}.dmg" "$DIST/rw."*.dmg
 
@@ -80,11 +61,10 @@ create-dmg \
   --background "$BG" \
   --window-pos 200 120 \
   --window-size 660 400 \
-  --icon-size 100 \
+  --icon-size 128 \
   --icon "Peek.app" 160 250 \
   --hide-extension "Peek.app" \
   --app-drop-link 500 250 \
-  --icon "If Peek won't open.command" 330 355 \
   --no-internet-enable \
   "$DIST/Peek.dmg" \
   "$STAGE"
